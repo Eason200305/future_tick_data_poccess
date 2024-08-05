@@ -1,0 +1,2 @@
+# future_tick_data_poccess
+期货tick数据合成15sK线，并与原数据对齐检查误差
