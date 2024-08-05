@@ -1,0 +1,148 @@
+contract = 'IC2309.CCFX'
+start_date = '2023-01-01'
+end_date = '2024-10-01' # 10-1
+
+import pandas as pd
+from datetime import timedelta
+from dateutil.relativedelta import relativedelta
+
+# 过滤掉集合竞价和交易时间之外的数据
+def filter_trading_hours(df):
+    mask = (
+        (df.index.time >= pd.to_datetime('09:25:00').time()) & (df.index.time <= pd.to_datetime('11:30:00').time())
+        | (df.index.time >= pd.to_datetime('13:00:00').time()) & (df.index.time <= pd.to_datetime('15:00:00').time())
+    )
+    return df[mask]
+
+def check_missing_timestamps(df):
+    """
+    检查时间戳是否在9:30-11:30和13:00-15:00之间，并找出缺失的时间戳。
+
+    参数:
+    df (pd.DataFrame): 带有DateTime索引的数据框
+
+    返回:
+    list: 缺失的时间戳
+    """
+    # 确保时间戳是 DateTime 类型
+    df.index = pd.to_datetime(df.index)
+    
+    # 获取所有交易日
+    trading_days = df.index.normalize().unique()
+    
+    # 生成完整的时间索引
+    complete_index = []
+    for day in trading_days:
+        morning_session = pd.date_range(start=day + timedelta(hours=9, minutes=30), end=day + timedelta(hours=11, minutes=30), freq='15S')
+        afternoon_session = pd.date_range(start=day + timedelta(hours=13), end=day + timedelta(hours=15), freq='15S')
+        complete_index.extend(morning_session)
+        complete_index.extend(afternoon_session)
+    
+    complete_index = pd.Index(complete_index)
+    
+    # 找出缺失的时间戳
+    missing_timestamps = complete_index.difference(df.index)
+    
+    return missing_timestamps
+
+def fill_missing_timestamps(df):
+    """
+    根据缺失的时间戳标签，在原 DataFrame 中填补这些空缺的时间戳行，使用前一行的样本填充。
+    
+    参数:
+    df (pd.DataFrame): 带有DateTime索引的数据框
+    
+    返回:
+    pd.DataFrame: 填补了缺失时间戳后的数据框
+    """
+    missing_timestamps = check_missing_timestamps(df)
+    
+    # 创建一个新的 DataFrame 来进行填补
+    df_filled = df.copy()
+    
+    # 重新索引 DataFrame 以包含所有时间戳
+    df_filled = df_filled.reindex(df_filled.index.union(missing_timestamps))
+    
+    # 保留含std的列不被填充
+    cols_reserve = ['a1_v_std','b1_v_std']
+    df_reserve = df_filled[cols_reserve].copy()
+    
+    # 使用前向填充填补缺失值
+    df_filled.ffill(inplace=True)
+    
+    # 把含nan值的std列填充回去
+    df_filled[cols_reserve] = df_reserve
+    
+    df_filled = df_filled[~((df_filled.index.time == pd.to_datetime('09:30:00').time()))]
+    df_filled = df_filled[~((df_filled.index.time == pd.to_datetime('13:00:00').time()))]
+    return df_filled
+
+#  Get数据
+
+date_range = pd.date_range(start=start_date, end=end_date, freq='D')
+
+allD = pd.DataFrame()
+# 遍历日期范围
+allD = pd.DataFrame()
+for date in date_range:
+    print(f'日期：{date}')
+    date_1 = date + relativedelta(days = 1)
+    df = get_ticks(contract,
+              start_dt=date,
+              end_dt=date_1,
+              fields=['time', 'current', 'volume','money','position','a1_p','b1_p','a1_v','b1_v'],
+              count=None,
+              skip = True,
+              df = True)
+    if df.empty:
+        print('非交易日，数据为空\n')
+        continue
+
+    df['time'] = df['time'].apply(lambda x: f"{int(x):08d}.{int((x % 1) * 10**3):03d}")
+    df['time'] = pd.to_datetime(df['time'], format='%Y%m%d%H%M%S.%f')
+    df.set_index('time', inplace=True)
+    df['volume'] = df['volume'].diff()
+    df['money'] = df['money'].diff()
+    
+    print(f'原始数据长度{len(df)}')
+    df = df.dropna(subset=['volume'])
+    df = filter_trading_hours(df)
+    print(f'过滤交易时间后的长度{len(df)}')
+    
+    
+    resampled_df = df.resample('15S', closed='right', label='right').agg({
+    'current': ['first', 'last', 'max', 'min'],
+    'volume': 'sum',
+    'money': 'sum',
+    'a1_p': 'last',
+    'b1_p': 'last',
+    'a1_v': ['last', 'sum', 'mean', 'std'],
+    'b1_v': ['last', 'sum', 'mean', 'std']
+    })
+
+    # 重命名列
+    resampled_df.columns = ['open', 'close', 'high', 'low', 'volume', 'money', 'a1_p', 'b1_p',
+                           'a1_v', 'a1_v_sum','a1_v_mean','a1_v_std', 'b1_v', 'b1_v_sum',
+                           'b1_v_mean', 'b1_v_std']
+    
+    # 计算 mean/std 并添加新列
+    #resampled_df['a1_v_std/mean'] = resampled_df['a1_v_std']/resampled_df['a1_v_mean']
+    #resampled_df['b1_v_std/mean'] = resampled_df['b1_v_std']/resampled_df['b1_v_mean']
+    
+    resampled_df = resampled_df.drop(columns=['a1_v', 'a1_p', 'b1_v', 'b1_p'])
+    print(f'resampled_df的长度为{len(resampled_df)}')
+    #去掉为合成的为nan值的数据
+    
+    resampled_df = resampled_df.dropna(subset=['open'])
+    print(f'剔除掉无效时间段后的长度：{len(resampled_df)}')
+    print('缺失的时间段')
+    print(check_missing_timestamps(resampled_df))
+    resampled_df = fill_missing_timestamps(resampled_df)
+    print(f'填充缺失时间后的长度为{len(resampled_df)}, 仍缺失的时间戳：')
+    print(check_missing_timestamps(resampled_df))
+    print('')
+    print('')
+    #resampled_df.to_pickle('IC2309data/'+str(date)+'pkl')
+    allD = pd.concat([allD,resampled_df])
+
+allD.to_pickle('data/'+str(contract)+'.pkl')
