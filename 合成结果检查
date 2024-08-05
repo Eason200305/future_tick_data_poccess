@@ -1,0 +1,131 @@
+## 重采样函数检查
+
+import pandas as pd
+df_15s = pd.read_pickle('/Users/weiel/Downloads/IC2309.CCFX (2).pkl')
+df_15s
+
+df_1m
+
+### nan值是否保留
+
+df_15s['a1_v_std'].isna().sum()
+
+### 重采样为1分钟
+
+resampled_df = df_15s.resample('60S', closed='right', label='right').agg({
+'open': 'first',# 开盘价和收盘价
+'close':'last',
+'high': 'max',
+'low': 'min',
+'volume': 'sum',
+'money': 'sum'
+})  # 移除多余的层次索引
+
+    # 重命名列
+resampled_df.columns = ['open', 'close', 'high', 'low', 'volume', 'money']
+
+### 计算误差均值
+
+sum_open = 0
+sum_close = 0
+sum_high = 0
+sum_low = 0
+sum_volume = 0
+sum_money = 0
+for i in df_1m.index:
+    sum_open += abs(resampled_df.loc[i,'open'] - df_1m.loc[i,'open'])
+    sum_close += abs(resampled_df.loc[i,'close'] - df_1m.loc[i,'close'])
+    sum_high += abs(resampled_df.loc[i,'high'] - df_1m.loc[i,'high'])
+    sum_low +=abs(resampled_df.loc[i,'low'] - df_1m.loc[i,'low'])
+    sum_volume +=abs(resampled_df.loc[i,'volume'] - df_1m.loc[i,'volume_min'])
+    sum_money +=abs(resampled_df.loc[i,'money'] - df_1m.loc[i,'money_min'])
+
+print((sum_open/len(df_1m))/df_1m['open'].mean())
+print((sum_close/len(df_1m))/df_1m['close'].mean())    
+print((sum_high/len(df_1m))/df_1m['high'].mean())
+print((sum_low/len(df_1m))/df_1m['low'].mean())
+print((sum_volume/len(df_1m))/df_1m['volume_min'].mean())
+print((sum_money/len(df_1m))/df_1m['money_min'].mean())
+
+## 不用重采样函数手动检查
+
+df_1m = pd.read_parquet('/Users/weiel/Desktop/股指期货/idx/IC/IC2309.parquet')
+df_1m
+
+df_15s = df_15s['2023-07-24 09:30:00':'2023-09-14 15:00:00']
+df_15s
+
+df_start = df_15s[df_15s.index.second == 15]
+df_end = df_15s[df_15s.index.second == 0]
+
+### 检查open是否准确
+
+from datetime import time
+j=0
+sum1 = 0
+for i in df_start.index:
+    open_ = df_start.loc[i,'open']
+    open_1m = df_1m.loc[str(i+pd.DateOffset(seconds = 45)),'open']
+    print(i)
+    print(open_)
+    print(open_1m)
+    j+=1
+    sum1+=abs(open_ - open_1m)
+    if j >430000:
+        break
+    
+print(sum1/j)
+
+### 检查close是否准确
+
+from datetime import time
+j=0
+sum1 = 0
+for i in df_1m.index:
+    close_ = df_end.loc[i,'close']
+    close_1m = df_1m.loc[i,'close']
+    print(i)
+    print(close_)
+    print(close_1m)
+    j+=1
+    sum1+=abs(close_ - close_1m)
+    if j >430000:
+        break
+    
+print(sum1/j)
+
+### 检查high的误差
+
+from datetime import time
+j=0
+sum1 = 0
+for i in df_1m.index:
+    close_ = df_end.loc[i,'high']
+    close_1m = df_1m.loc[i,'high']
+    print(i)
+    print(close_)
+    print(close_1m)
+    j+=1
+    sum1+=abs(close_ - close_1m)
+    if j >430000:
+        break
+    
+print(sum1/j)
+
+### low的误差
+
+from datetime import time
+j=0
+sum1 = 0
+for i in df_1m.index:
+    close_ = df_end.loc[i,'low']
+    close_1m = df_1m.loc[i,'low']
+    print(i)
+    print(close_)
+    print(close_1m)
+    j+=1
+    sum1+=abs(close_ - close_1m)
+    if j >430000:
+        break
+    
+print(sum1/j)
